@@ -17,12 +17,14 @@ use testing;
 /** A canned reply. */
 def struct Reply {
     status as int,
+    contentType as string,
     body as string
 };
 
 /** One request as the fake saw it. */
 def struct Seen {
     method as string,
+    path as string,
     contentType as string,
     action as string,
     body as string
@@ -34,6 +36,8 @@ def struct Fake {
     url as string,
     t as task of list of Seen
 };
+
+def const XML_TYPE as string init "text/xml; charset=utf-8";
 
 def const ENV_OPEN as string init '<env:Envelope xmlns:env="http://schemas.xmlsoap.org/soap/envelope/"><env:Header/><env:Body>';
 def const ENV_CLOSE as string init '</env:Body></env:Envelope>';
@@ -53,6 +57,10 @@ def const APPROX as string init ENV_OPEN +
     '<ns2:checkVatApproxResponse xmlns:ns2="urn:ec.europa.eu:taxud:vies:services:checkVat:types"><ns2:countryCode>DE</ns2:countryCode><ns2:vatNumber>100</ns2:vatNumber><ns2:requestDate>2026-11-14+01:00</ns2:requestDate><ns2:valid>true</ns2:valid><ns2:traderName>John Doe</ns2:traderName><ns2:traderCompanyType>000</ns2:traderCompanyType><ns2:traderAddress>123 Main St, Anytown, UK</ns2:traderAddress><ns2:traderNameMatch>1</ns2:traderNameMatch><ns2:traderCompanyTypeMatch>1</ns2:traderCompanyTypeMatch><ns2:traderStreetMatch>1</ns2:traderStreetMatch><ns2:traderPostcodeMatch>1</ns2:traderPostcodeMatch><ns2:traderCityMatch>1</ns2:traderCityMatch><ns2:requestIdentifier>WAPI0000001</ns2:requestIdentifier></ns2:checkVatApproxResponse>' +
     ENV_CLOSE;
 
+# recorded: GET check-status on the live service (whitespace removed)
+def const STATUS as string init
+    '{"vow":{"available":true},"countries":[{"countryCode":"AT","availability":"Available"},{"countryCode":"BE","availability":"Available"},{"countryCode":"BG","availability":"Available"},{"countryCode":"CY","availability":"Available"},{"countryCode":"CZ","availability":"Available"},{"countryCode":"DE","availability":"Available"},{"countryCode":"DK","availability":"Available"},{"countryCode":"EE","availability":"Available"},{"countryCode":"EL","availability":"Available"},{"countryCode":"ES","availability":"Available"},{"countryCode":"FI","availability":"Available"},{"countryCode":"FR","availability":"Available"},{"countryCode":"HR","availability":"Available"},{"countryCode":"HU","availability":"Available"},{"countryCode":"IE","availability":"Available"},{"countryCode":"IT","availability":"Available"},{"countryCode":"LT","availability":"Unavailable"},{"countryCode":"LU","availability":"Available"},{"countryCode":"LV","availability":"Unavailable"},{"countryCode":"MT","availability":"Available"},{"countryCode":"NL","availability":"Available"},{"countryCode":"PL","availability":"Available"},{"countryCode":"PT","availability":"Available"},{"countryCode":"RO","availability":"Available"},{"countryCode":"SE","availability":"Available"},{"countryCode":"SI","availability":"Available"},{"countryCode":"SK","availability":"Available"},{"countryCode":"XI","availability":"Available"}]}';
+
 /**
  * A fault as the test service sends it, with HTTP 200.
  *
@@ -62,6 +70,7 @@ def const APPROX as string init ENV_OPEN +
 func fault(code as string) {
     return Reply{
         status: 200,
+        contentType: XML_TYPE,
         body: ENV_OPEN + '<env:Fault><faultcode>env:Server</faultcode><faultstring>' + $code +
             '</faultstring></env:Fault>' + ENV_CLOSE
     };
@@ -74,7 +83,29 @@ func fault(code as string) {
  * @return {Reply} the reply
  */
 func ok(body as string) {
-    return Reply{status: 200, body: $body};
+    return Reply{status: 200, contentType: XML_TYPE, body: $body};
+}
+
+/**
+ * A JSON reply, as the availability endpoint sends it.
+ *
+ * @param status {int} the HTTP status
+ * @param body {string} the document
+ * @return {Reply} the reply
+ */
+func jsonReply(status as int, body as string) {
+    return Reply{status: $status, contentType: "application/json", body: $body};
+}
+
+/**
+ * An HTML page, as the service sends for maintenance or a gateway error.
+ *
+ * @param status {int} the HTTP status
+ * @param body {string} the page
+ * @return {Reply} the reply
+ */
+func page(status as int, body as string) {
+    return Reply{status: $status, contentType: "text/html", body: $body};
 }
 
 /**
@@ -90,11 +121,12 @@ func serve(srv as httpd.Server, replies as list of Reply) {
         def req as httpd.Request init httpd.accept($srv);
         $seen[] = Seen{
             method: httpd.method($req),
+            path: httpd.path($req),
             contentType: httpd.header($req, "Content-Type"),
             action: httpd.header($req, "SOAPAction"),
             body: convert.stringFromBytes("utf-8", httpd.body($req))
         };
-        httpd.setHeader($req, "Content-Type", "text/xml; charset=utf-8");
+        httpd.setHeader($req, "Content-Type", $r.contentType);
         httpd.respond($req, $r.status, $r.body);
     }
     return $seen;
@@ -372,6 +404,7 @@ func testOddReplies() {
     def f as Fake init fake([
         Reply{
             status: 200,
+            contentType: XML_TYPE,
             body: ENV_OPEN +
                 '<env:Fault><faultcode>env:Server</faultcode><faultstring>something broke: see log</faultstring></env:Fault>' +
                 ENV_CLOSE
@@ -379,7 +412,7 @@ func testOddReplies() {
         ok(strings.replace(VALID, "<ns2:valid>true</ns2:valid>", "<ns2:valid>yes</ns2:valid>")),
         ok(strings.replace(VALID, "<ns2:requestDate>2026-11-14+01:00</ns2:requestDate>", "")),
         ok(ENV_OPEN + ENV_CLOSE),
-        Reply{status: 500, body: "<html>broken</html>"}
+        page(500, "<html>broken</html>")
     ]);
     def c as Client init fakeClient($f);
     for (def want in [
@@ -397,6 +430,12 @@ func testOddReplies() {
             testing.assertEqual($e.code, "");
             testing.assertFalse($e.transient);
             testing.assertContains($e.message, $want);
+            # a refused reply carries its HTTP status
+            if ($want == "HTTP 500") {
+                testing.assertEqual($e.status, 500);
+            } else {
+                testing.assertEqual($e.status, 200);
+            }
         }
     }
     finish($f);
@@ -461,7 +500,7 @@ func testRetryWaitsAreCapped() {
 # The service's 503 maintenance page is retried like a transient fault; any
 # other HTTP failure is final.
 func testMaintenancePagesAreRetried() {
-    def down as Reply init Reply{status: 503, body: "<html>maintenance</html>"};
+    def down as Reply init page(503, "<html>maintenance</html>");
     def f as Fake init fake([
         $down,
         $down,
@@ -469,7 +508,7 @@ func testMaintenancePagesAreRetried() {
         $down,
         $down,
         $down,
-        Reply{status: 502, body: "<html>gateway</html>"}
+        page(502, "<html>gateway</html>")
     ]);
     def c as Client init fakeClient($f);
     testing.assertTrue(check($c, "IE", "6388047V").valid);
@@ -499,7 +538,7 @@ func testClientSettings() {
     testing.assertEqual($c.endpoint, ENDPOINT);
     testing.assertTrue($c.checkSyntax);
     testing.assertEqual($c.retries, DEFAULT_RETRIES);
-    def t as Client init testClient();
+    def t as Client init sandboxClient();
     testing.assertEqual($t.endpoint, TEST_ENDPOINT);
     testing.assertFalse($t.checkSyntax);
     testing.assertEqual($t.retries, 0);
@@ -570,6 +609,273 @@ func testAnEndpointSoapRefusesIsAViesError() {
     ]) {
         try {
             withEndpoint(client(), $bad);
+            missed();
+        } catch (e) {
+            testing.assertEqual($e.kind, ERROR_KIND);
+        }
+    }
+}
+
+# A Belgian number of 9 digits is the old form of the 10-digit one: a
+# leading 0 makes it whole, and the padded number is what VIES is asked.
+func testABelgianNumberOfNineDigitsIsPadded() {
+    def want as VatId init VatId{country: "BE", number: "0417497106"};
+    testing.assertEqual(normalize("BE", "BE417497106"), $want);
+    testing.assertEqual(normalize("be", "417497106"), $want);
+    testing.assertEqual(parse("BE417497106"), $want);
+    testing.assertEqual(parse("BE 417.497.106"), $want);
+    testing.assertEqual(parse("BE0417497106"), $want);
+    testing.assertEqual(parse("BE1234567890"), VatId{country: "BE", number: "1234567890"});
+    # only Belgium, and only 9 digits
+    testing.assertEqual(parse("DE123456789"), VatId{country: "DE", number: "123456789"});
+    for (def bad in ["BE41749710", "BE04174971060", "BE2123456789"]) {
+        testing.assertFalse(isWellFormed(parse($bad)));
+    }
+    def reply as string init strings.replace(
+        strings.replace(VALID, ">IE<", ">BE<"),
+        ">6388047V<",
+        ">0417497106<");
+    def f as Fake init fake([ok($reply)]);
+    def r as Result init check(fakeClient($f), "BE", "417.497.106");
+    testing.assertEqual($r.number, "0417497106");
+    testing.assertContains(finish($f)[0].body, ":vatNumber>0417497106</");
+}
+
+# A checkApprox answer is the proof of the check: without a consultation
+# number it is refused, not a result with "".
+func testAnApproxAnswerWithoutAnIdentifierIsAnError() {
+    def f as Fake init fake([
+        ok(regex.replace("<ns2:requestIdentifier>[^<]*</ns2:requestIdentifier>", APPROX, "")),
+        ok(strings.replace(APPROX, "WAPI0000001", "")),
+        ok(strings.replace(APPROX, "WAPI0000001", "  "))
+    ]);
+    def c as Client init fakeClient($f);
+    $c.checkSyntax = false;
+    for (def want in [
+        "no requestIdentifier",
+        "an empty requestIdentifier",
+        "an empty requestIdentifier"
+    ]) {
+        try {
+            checkApprox($c, "DE", "100", "AT", "100");
+            missed();
+        } catch (e) {
+            testing.assertEqual($e.kind, ERROR_KIND);
+            testing.assertEqual($e.code, "");
+            testing.assertFalse($e.transient);
+            testing.assertEqual($e.status, 200);
+            testing.assertContains($e.message, $want);
+        }
+    }
+    testing.assertEqual(len(finish($f)), 3);
+}
+
+# The answer must be the one to the request sent: the operation's response
+# element, echoing the number asked.
+func testAnAnswerToAnotherRequestIsAnError() {
+    def f as Fake init fake([
+        ok(strings.replace(INVALID, "checkVatResponse", "checkVatApproxResponse")),
+        ok(strings.replace(APPROX, "checkVatApproxResponse", "checkVatResponse")),
+        ok(strings.replace(INVALID, "checkVatResponse", "checkVatFault")),
+        ok(strings.replace(VALID, ">IE<", ">DE<")),
+        ok(strings.replace(VALID, ">6388047V<", ">6388047W<")),
+        ok(strings.replace(APPROX, ">DE<", ">AT<")),
+        ok(strings.replace(APPROX, ">100<", ">200<"))
+    ]);
+    def c as Client init fakeClient($f);
+    $c.checkSyntax = false;
+    def calls as list of list of string init [
+        ["check", "DE", "200", 'the reply is "checkVatApproxResponse", not checkVatResponse'],
+        ["approx", "DE", "100", 'the reply is "checkVatResponse", not checkVatApproxResponse'],
+        ["check", "DE", "200", 'the reply is "checkVatFault", not checkVatResponse'],
+        ["check", "IE", "6388047V", 'the reply is for country "DE", not IE'],
+        ["check", "IE", "6388047V", 'the reply is for number "6388047W", not 6388047V'],
+        ["approx", "DE", "100", 'the reply is for country "AT", not DE'],
+        ["approx", "DE", "100", 'the reply is for number "200", not 100']
+    ];
+    for (def call in $calls) {
+        try {
+            if ($call[0] == "check") {
+                check($c, $call[1], $call[2]);
+            } else {
+                checkApprox($c, $call[1], $call[2], "AT", "100");
+            }
+            missed();
+        } catch (e) {
+            testing.assertEqual($e.kind, ERROR_KIND);
+            testing.assertEqual($e.code, "");
+            testing.assertFalse($e.transient);
+            testing.assertEqual($e.status, 200);
+            testing.assertContains($e.message, $call[3]);
+        }
+    }
+    testing.assertEqual(len(finish($f)), 7);
+}
+
+# The element is matched by its local name: another prefix is the same
+# answer.
+func testTheReplyPrefixDoesNotMatter() {
+    def f as Fake init fake([
+        ok(strings.replace(strings.replace(VALID, "ns2:", "v:"), "xmlns:ns2", "xmlns:v"))
+    ]);
+    def r as Result init check(fakeClient($f), "IE", "6388047V");
+    testing.assertTrue($r.valid);
+    finish($f);
+}
+
+func testStatus() {
+    def f as Fake init fake([jsonReply(200, STATUS)]);
+    def url as string init strings.replace($f.url, "/vies", "/rest-api/check-status");
+    def s as Status init status(withStatusEndpoint(fakeClient($f), $url));
+    testing.assertTrue($s.available);
+    testing.assertEqual(len($s.countries), 28);
+    testing.assertEqual(
+        $s.countries[0],
+        CountryStatus{country: "AT", availability: "Available", available: true});
+    def down as list of string init [];
+    for (def cs in $s.countries) {
+        if (not $cs.available) {
+            $down[] = $cs.country + " " + $cs.availability;
+        }
+    }
+    testing.assertEqual($down, ["LT Unavailable", "LV Unavailable"]);
+    def seen as list of Seen init finish($f);
+    testing.assertEqual($seen[0].method, "GET");
+    testing.assertEqual($seen[0].path, "/rest-api/check-status");
+}
+
+# A status VIES does not name "Available" is kept as sent and counts as not
+# available; the service's own flag is read as it is.
+func testStatusKeepsOtherAvailabilities() {
+    def f as Fake init fake([
+        jsonReply(
+            200,
+            '{"vow":{"available":false},"countries":[{"countryCode":"DE","availability":"Monitoring Disabled"}],"extra":1}')
+    ]);
+    def s as Status init status(withStatusEndpoint(client(), $f.url));
+    testing.assertFalse($s.available);
+    testing.assertEqual(
+        $s.countries,
+        [CountryStatus{country: "DE", availability: "Monitoring Disabled", available: false}]);
+    finish($f);
+}
+
+func testStatusRefusesAMalformedAnswer() {
+    def f as Fake init fake([
+        page(503, "<html>maintenance</html>"),
+        page(500, "<html>broken</html>"),
+        page(200, "<html>ok</html>"),
+        jsonReply(200, '{"countries":[]}'),
+        jsonReply(200, '{"vow":{"available":"yes"},"countries":[]}'),
+        jsonReply(200, '{"vow":{"available":true}}'),
+        jsonReply(200, '{"vow":{"available":true},"countries":{}}'),
+        jsonReply(
+            200,
+            '{"vow":{"available":true},"countries":[{"countryCode":"de","availability":"Available"}]}'),
+        jsonReply(200, '{"vow":{"available":true},"countries":[{"countryCode":"DE"}]}'),
+        jsonReply(
+            200,
+            '{"vow":{"available":true},"countries":[{"countryCode":"DE","availability":""}]}'),
+        jsonReply(200, '{"vow":{"available":true},"countries":["DE"]}'),
+        jsonReply(200, '[]')
+    ]);
+    def c as Client init withStatusEndpoint(fakeClient($f), $f.url);
+    def wants as list of string init [
+        "HTTP 503",
+        "HTTP 500",
+        "not JSON",
+        "no vow/available",
+        "no vow/available",
+        "no countries",
+        "no countries",
+        'country code "de"',
+        "no availability",
+        "no availability",
+        "countries/0 is not an object",
+        "not an object"
+    ];
+    for (def i in 0..len($wants)) {
+        try {
+            status($c);
+            missed();
+        } catch (e) {
+            testing.assertEqual($e.kind, ERROR_KIND);
+            testing.assertEqual($e.code, "");
+            testing.assertContains($e.message, "vies: status: ");
+            testing.assertContains($e.message, $wants[$i]);
+            # 503 is the maintenance page: try later
+            testing.assertEqual($e.transient, $i == 0);
+            if ($i == 0) {
+                testing.assertEqual($e.status, 503);
+            } elseif ($i == 1) {
+                testing.assertEqual($e.status, 500);
+            } else {
+                testing.assertEqual($e.status, 200);
+            }
+        }
+    }
+    # not retried: one request each
+    testing.assertEqual(len(finish($f)), len($wants));
+}
+
+func testAnOversizedStatusIsALimit() {
+    def f as Fake init fake([
+        jsonReply(200, strings.replace(STATUS, "Unavailable", strings.repeat("x", 70000)))
+    ]);
+    try {
+        status(withStatusEndpoint(client(), $f.url));
+        missed();
+    } catch (e) {
+        testing.assertEqual($e.kind, "limit");
+    }
+    finish($f);
+}
+
+func testAStatusTimeoutIsKindTimeout() {
+    def l as net.Listener init net.listen("127.0.0.1:0");
+    def t as task of int init spawn {
+        def conn as net.Conn init net.accept($l);
+        net.readBytes($conn, 65536);
+        time.sleep(time.fromMilliseconds(1600));
+        net.close($conn);
+        return 0;
+    };
+    def c as Client init withTimeout(
+        withStatusEndpoint(client(), "http://" + net.address($l) + "/check-status"),
+        1000);
+    try {
+        status($c);
+        missed();
+    } catch (e) {
+        testing.assertEqual($e.kind, "timeout");
+    }
+    task.wait($t);
+    net.close($l);
+}
+
+func testStatusEndpointSettings() {
+    testing.assertEqual(client().statusEndpoint, STATUS_ENDPOINT);
+    testing.assertEqual(sandboxClient().statusEndpoint, STATUS_ENDPOINT);
+    # the SOAP endpoint does not move the status one
+    testing.assertEqual(
+        withEndpoint(client(), "http://127.0.0.1:8080/vies").statusEndpoint,
+        STATUS_ENDPOINT);
+    testing.assertEqual(
+        withStatusEndpoint(client(), "https://proxy.example.org/status").statusEndpoint,
+        "https://proxy.example.org/status");
+    testing.assertEqual(
+        withStatusEndpoint(client(), "http://[::1]:8080/s").statusEndpoint,
+        "http://[::1]:8080/s");
+    for (def bad in [
+        "http://vies.example.org/",
+        "ftp://x/",
+        "https://x/?a=1",
+        "https://a b/",
+        "https://user:pw@ec.europa.eu/s",
+        "https://ec.europa.eu/s\u0001"
+    ]) {
+        try {
+            withStatusEndpoint(client(), $bad);
             missed();
         } catch (e) {
             testing.assertEqual($e.kind, ERROR_KIND);

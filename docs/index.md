@@ -34,7 +34,15 @@ trims its ends only.
 `checkApprox` makes the same check and also sends the caller's own VAT
 number. Its answer carries a consultation number, `requestIdentifier`:
 keep it with the invoice as proof that the number was checked on that
-date. A check is proof only for its date, so the deck caches nothing.
+date. An answer without one (missing or empty) is no proof, so it is a
+`ViesError` with code `""`, never a result. A check is proof only for its
+date, so the deck caches nothing.
+
+Each answer must be the one asked for: a `checkVatResponse` for `check`, a
+`checkVatApproxResponse` for `checkApprox` (by local name, any prefix),
+echoing the country code and number sent (after normalisation). Anything
+else is a `ViesError` with code `""`, not transient, with the reply's HTTP
+status.
 
 ```jennifer
 def p as vies.ApproxResult init vies.checkApprox(vies.client(), "DE", "123456789", "AT", "U12345678");
@@ -52,6 +60,11 @@ Ireland; `countries()` lists them. A number that already fits its country's
 syntax keeps its first two characters, so a French number whose key is
 `FR` (`"FR123456789"`) is not taken for a prefix.
 
+A Belgian number of 9 digits is the old form of today's 10: the deck adds
+the leading `0` after removing separators and the prefix, so
+`"BE 417.497.106"` becomes `0417497106`, the number VIES is asked and
+echoes. Other lengths are left to the syntax check.
+
 Before any request, `check` refuses a number that does not fit its
 country's syntax (`isWellFormed`), so an obviously wrong number fails
 offline. The syntax says nothing about a number being registered; check
@@ -65,7 +78,7 @@ A refused or failed check throws `ViesError` (kind `"vies"`):
 |---|---|
 | `code` | VIES's fault code, `""` for an error found locally or a transport failure |
 | `transient` | "try again later": one of `TRANSIENT_CODES`, or the service's 503 maintenance page |
-| `status` | the HTTP status of the exchange, 0 for a local error |
+| `status` | the HTTP status of the reply refused, 0 for a local error |
 
 A server that does not answer in time is kind `"timeout"`, one that closes
 the connection under the call kind `"closed"` (on an interpreter whose
@@ -105,9 +118,34 @@ try {
 }
 ```
 
+## Availability
+
+`status(c)` reads VIES's REST availability endpoint, `STATUS_ENDPOINT`,
+once (no retries): whether the service itself is up, and for each member
+state the word VIES uses (`Available` or `Unavailable` seen live; any
+other is kept too). `available` is true only for `Available`;
+`availability` keeps the word as sent.
+
+```jennifer
+def s as vies.Status init vies.status(vies.client());
+for (def cs in $s.countries) {
+    if (not $cs.available) {
+        io.printf("%s is %s\n", $cs.country, $cs.availability);
+    }
+}
+```
+
+The endpoint is not under the SOAP endpoint's path, so `withEndpoint` does
+not move it; `withStatusEndpoint(c, url)` does, under the same rule
+(`https://`, or `http://` on this machine). An HTTP failure is a
+`ViesError` with code `""` and its status (`transient` for 503), as is an
+answer that is not the expected JSON; a reply over 64 KiB is kind
+`"limit"`, a server that does not answer in time `"timeout"`.
+
 ## The test service
 
-`testClient()` talks to the Commission's test service, which answers by
+`sandboxClient()` talks to the Commission's test service, which answers by
 number: `100` is valid, `200` invalid, and `201` to `601` each return
 one fault (`300` `SERVICE_UNAVAILABLE`, `600` `MS_MAX_CONCURRENT_REQ`,
-...). Syntax checks and retries are off on it.
+...). Syntax checks and retries are off on it. It was `testClient()`
+before 0.2.0; the test runner took that exported name for a test.

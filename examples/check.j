@@ -21,7 +21,7 @@ def args as list of string init os.ARGS[1..len(os.ARGS)];
 def c as vies.Client init vies.client();
 def numbers as list of vies.VatId init [];
 if (len($args) == 0) {
-    $c = vies.testClient();
+    $c = vies.sandboxClient();
     $numbers = [vies.normalize("DE", "100"), vies.normalize("DE", "200")];
 } else {
     for (def a in $args) {

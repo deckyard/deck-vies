@@ -11,7 +11,9 @@ import "@deckyard/vies/" as vies;
 ```
 
 A refused or failed check throws `ViesError` (kind `"vies"`) with VIES's
-fault `code` and `transient`; a reply over its cap is kind `"limit"`.
+fault `code` and `transient`; an answer to another request (wrong element,
+another number echoed, `checkApprox` without a consultation number) has
+code `""`. A reply over its cap is kind `"limit"`.
 
 ## Constants
 
@@ -19,6 +21,8 @@ fault `code` and `transient`; a reply over its cap is kind `"limit"`.
 |---|---|---|
 | `ERROR_KIND` | `"vies"` | the kind of a `ViesError` |
 | `ENDPOINT` | `"https://ec.europa.eu/taxation_customs/vies/services/checkVatService"` | the VIES service |
+| `STATUS_ENDPOINT` | `"https://ec.europa.eu/taxation_customs/vies/rest-api/check-status"` | the availability endpoint `status` reads |
+| `AVAILABLE` | `"Available"` | the `availability` of a member state VIES can reach |
 | `TEST_ENDPOINT` | `"https://ec.europa.eu/taxation_customs/vies/services/checkVatTestService"` | the test service |
 | `DEFAULT_TIMEOUT_MS` | `30000` | the idle timeout of one request |
 | `DEFAULT_RETRIES` | `2` | retries of a transient fault |
@@ -33,8 +37,9 @@ fault `code` and `transient`; a reply over its cap is kind `"limit"`.
 | Function | Returns | Does |
 |---|---|---|
 | `client()` | `Client` | the VIES service: 30 s, 2 retries, syntax checks on |
-| `testClient()` | `Client` | the test service; syntax checks and retries off |
+| `sandboxClient()` | `Client` | the test service; syntax checks and retries off |
 | `withEndpoint(c, url)` | `Client` | another endpoint; `http://` only on this machine |
+| `withStatusEndpoint(c, url)` | `Client` | another availability endpoint; `http://` only on this machine |
 | `withTimeout(c, ms)` | `Client` | the idle timeout of one request, 1000 to 300000 ms |
 | `withRetries(c, n, backoffMs)` | `Client` | retries of a transient fault (0 to 10) and the first wait (0 to `MAX_WAIT_MS`) |
 | `check(c, country, number)` | `Result` | check a number; `valid` false when VIES does not know it |
@@ -43,6 +48,7 @@ fault `code` and `transient`; a reply over its cap is kind `"limit"`.
 | `parse(vat)` | `VatId` | a number written with its country prefix |
 | `isWellFormed(id)` | `bool` | the number fits its country's syntax |
 | `countries()` | `list of string` | the country codes VIES checks |
+| `status(c)` | `Status` | which member states VIES can reach now; one request, not retried |
 
 ## Types
 
@@ -51,6 +57,7 @@ fault `code` and `transient`; a reply over its cap is kind `"limit"`.
 | Field | Meaning |
 |---|---|
 | `endpoint as string` | the SOAP service URL |
+| `statusEndpoint as string` | the availability endpoint |
 | `timeoutMs as int` | the idle timeout of one request |
 | `retries as int` | retries of a transient fault |
 | `backoffMs as int` | the first wait, doubled after, at most `MAX_WAIT_MS` each |
@@ -61,7 +68,7 @@ fault `code` and `transient`; a reply over its cap is kind `"limit"`.
 | Field | Meaning |
 |---|---|
 | `country as string` | the VIES country code, such as `DE`, `EL`, `XI` |
-| `number as string` | the number without its prefix, upper case |
+| `number as string` | the number without its prefix, upper case; a 9-digit Belgian one gets its leading `0` |
 
 ### `Result`
 
@@ -85,7 +92,22 @@ fault `code` and `transient`; a reply over its cap is kind `"limit"`.
 | `address as string` | the trader's address, `""` if not disclosed |
 | `companyType as string` | the company type code, `""` if none |
 | `requestDate as string` | the date of the check |
-| `requestIdentifier as string` | the consultation number to keep as proof |
+| `requestIdentifier as string` | the consultation number to keep as proof; never `""` |
+
+### `Status`
+
+| Field | Meaning |
+|---|---|
+| `available as bool` | the VIES service itself is up |
+| `countries as list of CountryStatus` | each member state, in VIES's order |
+
+### `CountryStatus`
+
+| Field | Meaning |
+|---|---|
+| `country as string` | the VIES country code |
+| `availability as string` | VIES's word, as sent: `Available`, `Unavailable`, ... |
+| `available as bool` | `availability` is `AVAILABLE` |
 
 ### `ViesError`
 
@@ -95,4 +117,4 @@ fault `code` and `transient`; a reply over its cap is kind `"limit"`.
 | `message as string` | `vies: <what>` |
 | `code as string` | VIES's fault code, `""` if none |
 | `transient as bool` | try again later: a transient fault or a 503 page |
-| `status as int` | the HTTP status, 0 for a local error |
+| `status as int` | the HTTP status of the reply refused, 0 for a local error |

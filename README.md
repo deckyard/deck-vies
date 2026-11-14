@@ -32,13 +32,15 @@ def r as vies.Result init vies.check(vies.client(), "IE", "IE 6388047V");
 io.printf("%s %s\n", $r.valid, $r.name);
 ```
 
+`vies.status(c)` reports which member states VIES can reach now.
 `examples/check.j` checks the numbers given as arguments, or asks the
-Commission's test service without them.
+Commission's test service (`vies.sandboxClient()`) without them.
 
 ## Requirements
 
 Jennifer 0.26.0 or newer, with the `net` capability: the checks are SOAP
-requests to the Commission's VIES service, over the bundled `soap` module.
+requests to the Commission's VIES service, over the bundled `soap` module,
+and `status` a `GET` over the bundled `http` module.
 
 ## Development
 
