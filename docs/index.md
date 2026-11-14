@@ -64,11 +64,14 @@ A refused or failed check throws `ViesError` (kind `"vies"`):
 | Field | Meaning |
 |---|---|
 | `code` | VIES's fault code, `""` for an error found locally or a transport failure |
-| `transient` | the fault means "try again later" (`TRANSIENT_CODES`) |
+| `transient` | "try again later": one of `TRANSIENT_CODES`, or the service's 503 maintenance page |
 | `status` | the HTTP status of the exchange, 0 for a local error |
 
-A transport failure, a timeout included, is a `ViesError` with code `""`
-and is not retried: the bundled `soap` module passes only `"limit"` on.
+A server that does not answer in time is kind `"timeout"`, one that closes
+the connection under the call kind `"closed"` (on an interpreter whose
+bundled `soap` module passes them on, from jennifer 0.26.0; before, they
+were a `ViesError` with code `""`). Any other transport failure is a
+`ViesError` with code `""`. None of these is retried.
 
 The fault codes:
 
@@ -82,10 +85,14 @@ The fault codes:
 | `TIMEOUT` | the member state did not answer in time | yes |
 | `GLOBAL_MAX_CONCURRENT_REQ`, `MS_MAX_CONCURRENT_REQ` (and `_TIME`) | too many requests, overall or to that member state | yes |
 
-A transient fault is retried `DEFAULT_RETRIES` (2) times, waiting 1 s and
-then 2 s; `withRetries(c, n, backoffMs)` changes both. A member state is
-often down for maintenance at night: a transient error after the retries
-means "check again later", not "the number is wrong". A reply over 64 KiB
+A transient fault, and an HTTP 503 (the service's maintenance or overload
+page, `UNAVAILABLE_STATUS`), is retried `DEFAULT_RETRIES` (2) times,
+waiting 1 s and then 2 s; `withRetries(c, n, backoffMs)` changes both.
+Each wait doubles the one before but never exceeds `MAX_WAIT_MS` (30 s),
+so the most retries allowed, 10, wait at most 5 minutes in all. A member
+state is often down for maintenance at night: a transient error after the
+retries means "check again later", not "the number is wrong". Any other
+HTTP failure (500, 502, ...) is final. A reply over 64 KiB
 is kind `"limit"`.
 
 ```jennifer

@@ -10,6 +10,7 @@
  * 2026-11-14, and hands back what it received.
  */
 use httpd;
+use net;
 use task;
 use testing;
 
@@ -378,7 +379,7 @@ func testOddReplies() {
         ok(strings.replace(VALID, "<ns2:valid>true</ns2:valid>", "<ns2:valid>yes</ns2:valid>")),
         ok(strings.replace(VALID, "<ns2:requestDate>2026-11-14+01:00</ns2:requestDate>", "")),
         ok(ENV_OPEN + ENV_CLOSE),
-        Reply{status: 503, body: "<html>down</html>"}
+        Reply{status: 500, body: "<html>broken</html>"}
     ]);
     def c as Client init fakeClient($f);
     for (def want in [
@@ -386,7 +387,7 @@ func testOddReplies() {
         'valid is "yes", not a boolean',
         "the reply has no requestDate",
         "the reply is empty",
-        "HTTP 503"
+        "HTTP 500"
     ]) {
         try {
             check($c, "IE", "6388047V");
@@ -412,6 +413,85 @@ func testAnOversizedReplyIsALimit() {
         testing.assertEqual($e.kind, "limit");
     }
     finish($f);
+}
+
+# A server that does not answer is kind "timeout", not a ViesError, and is
+# not retried (the bundled soap module passes the kind on since 0.26.0).
+func testATimeoutIsKindTimeout() {
+    def l as net.Listener init net.listen("127.0.0.1:0");
+    def t as task of int init spawn {
+        def conn as net.Conn init net.accept($l);
+        net.readBytes($conn, 65536);
+        time.sleep(time.fromMilliseconds(1600));
+        net.close($conn);
+        return 0;
+    };
+    def c as Client init withTimeout(
+        withRetries(withEndpoint(client(), "http://" + net.address($l) + "/vies"), 2, 0),
+        1000);
+    try {
+        check($c, "IE", "6388047V");
+        missed();
+    } catch (e) {
+        testing.assertEqual($e.kind, "timeout");
+        testing.assertContains($e.message, "soap: POST ");
+    }
+    task.wait($t);
+    net.close($l);
+}
+
+# Each wait doubles the one before, up to MAX_WAIT_MS: 10 retries wait at
+# most 5 minutes in all, not hours.
+func testRetryWaitsAreCapped() {
+    def c as Client init withRetries(client(), 10, 1000);
+    def waits as list of int init [];
+    def total as int init 0;
+    for (def a in 0..10) {
+        $waits[] = retryWait($c, $a);
+        $total = $total + retryWait($c, $a);
+    }
+    testing.assertEqual($waits, [1000, 2000, 4000, 8000, 16000, 30000, 30000, 30000, 30000, 30000]);
+    testing.assertEqual($total, 181000);
+    def most as Client init withRetries(client(), 10, MAX_WAIT_MS);
+    testing.assertEqual(retryWait($most, 0), MAX_WAIT_MS);
+    testing.assertEqual(retryWait($most, 9), MAX_WAIT_MS);
+    testing.assertEqual(retryWait(withRetries(client(), 2, 0), 1), 0);
+}
+
+# The service's 503 maintenance page is retried like a transient fault; any
+# other HTTP failure is final.
+func testMaintenancePagesAreRetried() {
+    def down as Reply init Reply{status: 503, body: "<html>maintenance</html>"};
+    def f as Fake init fake([
+        $down,
+        $down,
+        ok(VALID),
+        $down,
+        $down,
+        $down,
+        Reply{status: 502, body: "<html>gateway</html>"}
+    ]);
+    def c as Client init fakeClient($f);
+    testing.assertTrue(check($c, "IE", "6388047V").valid);
+    try {
+        check($c, "IE", "6388047V");
+        missed();
+    } catch (e) {
+        testing.assertEqual($e.kind, ERROR_KIND);
+        testing.assertEqual($e.code, "");
+        testing.assertTrue($e.transient);
+        testing.assertEqual($e.status, 503);
+        testing.assertContains($e.message, "(after 2 retries)");
+    }
+    try {
+        check($c, "IE", "6388047V");
+        missed();
+    } catch (e) {
+        testing.assertFalse($e.transient);
+        testing.assertEqual($e.status, 502);
+        testing.assertFalse(strings.contains($e.message, "retries"));
+    }
+    testing.assertEqual(len(finish($f)), 7);
 }
 
 func testClientSettings() {
@@ -446,7 +526,7 @@ func testClientSettings() {
             testing.assertEqual($e.kind, ERROR_KIND);
         }
     }
-    for (def pair in [[-1, 0], [11, 0], [1, -1], [1, 60001]]) {
+    for (def pair in [[-1, 0], [11, 0], [1, -1], [1, MAX_WAIT_MS + 1]]) {
         try {
             withRetries($c, $pair[0], $pair[1]);
             missed();

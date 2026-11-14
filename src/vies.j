@@ -18,8 +18,10 @@
  * A number VIES does not know is a result with `valid` false, not an error.
  * A refused or failed check throws `ViesError` (kind `"vies"`) with VIES's
  * fault `code` and whether it is `transient` (a member state or the service
- * is down or busy: try again later); transient faults are retried with
- * backoff first. A reply over the size cap is kind `"limit"`.
+ * is down or busy, or the service shows its 503 maintenance page: try
+ * again later); those are retried with backoff first. A reply over the size cap is kind `"limit"`, a server that
+ * does not answer in time `"timeout"`, one that closes the connection
+ * `"closed"`.
  *
  * @module vies
  * @see https://ec.europa.eu/taxation_customs/vies/
@@ -63,6 +65,18 @@ export def const DEFAULT_RETRIES as int init 2;
 
 /** The wait before the first retry, doubled for each further one. */
 export def const DEFAULT_BACKOFF_MS as int init 1000;
+
+/**
+ * The longest wait before one retry, however often the wait has doubled:
+ * with at most 10 retries a check waits at most 5 minutes in all.
+ */
+export def const MAX_WAIT_MS as int init 30000;
+
+/**
+ * The HTTP status of the service's maintenance or overload page, retried
+ * like a transient fault.
+ */
+export def const UNAVAILABLE_STATUS as int init 503;
 
 /** The most bytes a reply may have; VIES replies are well under 4 KiB. */
 export def const MAX_REPLY_BYTES as int init 65536;
@@ -124,7 +138,8 @@ def const SYNTAX as map of string to string init {
  * @field timeoutMs {int} the idle timeout of one request (each read and
  *   write), not a total deadline
  * @field retries {int} how often a transient fault is retried
- * @field backoffMs {int} the wait before the first retry, doubled after
+ * @field backoffMs {int} the wait before the first retry, doubled after, at
+ *   most `MAX_WAIT_MS` each
  * @field checkSyntax {bool} refuse a number that does not fit its country's
  *   syntax before sending it; off for the test service, whose numbers are
  *   `100`, `200`, ...
@@ -201,8 +216,9 @@ export def struct ApproxResult {
  * @field message {string} `vies: <what>`
  * @field code {string} VIES's fault code (`INVALID_INPUT`, `MS_UNAVAILABLE`,
  *   ...); `""` for an error found locally or a transport failure
- * @field transient {bool} the fault is one of `TRANSIENT_CODES`: try again
- *   later
+ * @field transient {bool} try again later: the fault is one of
+ *   `TRANSIENT_CODES`, or the service answered `UNAVAILABLE_STATUS` (503,
+ *   its maintenance page)
  * @field status {int} the HTTP status of a failed exchange, else 0
  */
 export def struct ViesError {
@@ -317,14 +333,14 @@ export func withTimeout(c as Client, ms as int) {
  *
  * @param c {Client} the client
  * @param n {int} retries, 0 to 10
- * @param backoffMs {int} the wait before the first retry, 0 to 60000 ms,
- *   doubled for each further one
+ * @param backoffMs {int} the wait before the first retry, 0 to
+ *   `MAX_WAIT_MS`, doubled for each further one up to `MAX_WAIT_MS`
  * @return {Client} the changed copy
  * @throws {ViesError} kind `"vies"` outside those ranges
  */
 export func withRetries(c as Client, n as int, backoffMs as int) {
-    if ($n < 0 or $n > 10 or $backoffMs < 0 or $backoffMs > 60000) {
-        fail("retries are 0 to 10 and a backoff 0 to 60000 ms");
+    if ($n < 0 or $n > 10 or $backoffMs < 0 or $backoffMs > MAX_WAIT_MS) {
+        fail("retries are 0 to 10 and a backoff 0 to " + convert.toString(MAX_WAIT_MS) + " ms");
     }
     $c.retries = $n;
     $c.backoffMs = $backoffMs;
@@ -429,6 +445,41 @@ func ready(c as Client, country as string, number as string) {
 }
 
 /**
+ * The note an error carries after retries.
+ *
+ * @param attempt {int} the retries made
+ * @return {string} `" (after N retries)"`, or `""` for none
+ */
+func retriesNote(attempt as int) {
+    if ($attempt == 0) {
+        return "";
+    }
+    return io.sprintf(" (after %d retries)", $attempt);
+}
+
+/**
+ * The wait before a retry: the backoff doubled once per earlier retry,
+ * never more than `MAX_WAIT_MS`.
+ *
+ * @param c {Client} the client
+ * @param attempt {int} the retries made so far, from 0
+ * @return {int} milliseconds
+ */
+func retryWait(c as Client, attempt as int) {
+    def wait as int init $c.backoffMs;
+    for (def k in 0..$attempt) {
+        if ($wait >= MAX_WAIT_MS) {
+            return MAX_WAIT_MS;
+        }
+        $wait = $wait * 2;
+    }
+    if ($wait > MAX_WAIT_MS) {
+        return MAX_WAIT_MS;
+    }
+    return $wait;
+}
+
+/**
  * Send one operation, retrying transient faults, and return the result
  * element's values.
  *
@@ -444,18 +495,32 @@ func exchange(c as Client, op as xml.Value, what as string) {
     def attempt as int init 0;
     while (true) {
         def r as soap.Reply;
+        def failed as string init "";
+        def failedStatus as int init 0;
         try {
             $r = soap.send($sc, "", $op);
         } catch (e) {
             if ($e.kind != soap.ERROR_KIND) {
                 throw $e;
             }
+            $failed = $e.message;
+            $failedStatus = $e.status;
+        }
+        if ($failed != "") {
+            # 503 is the service's maintenance or overload page: a transient
+            # failure like MS_UNAVAILABLE, retried the same way
+            def busy as bool init $failedStatus == UNAVAILABLE_STATUS;
+            if ($busy and $attempt < $c.retries) {
+                time.sleep(time.fromMilliseconds(retryWait($c, $attempt)));
+                $attempt = $attempt + 1;
+                continue;
+            }
             throw ViesError{
                 kind: ERROR_KIND,
-                message: "vies: " + $what + ": " + $e.message,
+                message: "vies: " + $what + ": " + $failed + retriesNote($attempt),
                 code: "",
-                transient: false,
-                status: $e.status
+                transient: $busy,
+                status: $failedStatus
             };
         }
         if (not $r.isFault) {
@@ -476,20 +541,12 @@ func exchange(c as Client, op as xml.Value, what as string) {
         }
         def transient as bool init lists.contains(TRANSIENT_CODES, $code);
         if ($transient and $attempt < $c.retries) {
-            def wait as int init $c.backoffMs;
-            for (def k in 0..$attempt) {
-                $wait = $wait * 2;
-            }
-            time.sleep(time.fromMilliseconds($wait));
+            time.sleep(time.fromMilliseconds(retryWait($c, $attempt)));
             $attempt = $attempt + 1;
         } else {
-            def tries as string init "";
-            if ($attempt > 0) {
-                $tries = io.sprintf(" (after %d retries)", $attempt);
-            }
             throw ViesError{
                 kind: ERROR_KIND,
-                message: "vies: " + $what + ": " + $code + $tries,
+                message: "vies: " + $what + ": " + $code + retriesNote($attempt),
                 code: $code,
                 transient: $transient,
                 status: $r.status
