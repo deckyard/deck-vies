@@ -1,0 +1,17 @@
+[package]
+name = "@deckyard/vies"
+version = "0.1.0"
+description = "EU VAT number validation through the European Commission's VIES service"
+license = "LGPL-3.0-only"
+authors = ["mplx <mplx@jennifer-lang.dev>"]
+# The checks are SOAP requests to the Commission's VIES service.
+capabilities = ["net"]
+keywords = ["vat", "vies", "eu", "tax", "invoicing", "reverse-charge", "soap"]
+
+[package.urls]
+deck = "https://raw.githubusercontent.com/deckyard/deck-vies/main/deck.toml"
+homepage = "https://github.com/deckyard/deck-vies"
+manual = "https://deckyard.github.io/deck-vies/"
+
+[engines]
+jennifer = ">=0.26.0"
