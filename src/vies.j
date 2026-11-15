@@ -21,7 +21,9 @@
  * is down or busy, or the service shows its 503 maintenance page: try
  * again later); those are retried with backoff first. A reply over the size cap is kind `"limit"`, a server that
  * does not answer in time `"timeout"`, one that closes the connection
- * `"closed"`.
+ * mid-reply `"closed"`, and one that cannot be reached (refused, reset, DNS,
+ * TLS, a close before any answer) is a `net.NetError` (kind `"net"`), never
+ * retried.
  *
  * `status` asks VIES's availability endpoint which member states it can
  * reach now, before a batch of checks or to tell an outage apart.
@@ -273,7 +275,7 @@ def struct Answer {
  * @field kind {string} always `"vies"`
  * @field message {string} `vies: <what>`
  * @field code {string} VIES's fault code (`INVALID_INPUT`, `MS_UNAVAILABLE`,
- *   ...); `""` for an error found locally or a transport failure
+ *   ...); `""` for an error found locally or a failed HTTP exchange
  * @field transient {bool} try again later: the fault is one of
  *   `TRANSIENT_CODES`, or the service answered `UNAVAILABLE_STATUS` (503,
  *   its maintenance page)
@@ -752,6 +754,7 @@ func optional(a as Answer, name as string) {
  *   request) or a fault, with its `code` and `transient`; code `""` for a
  *   reply that is not a `checkVatResponse` for the number sent; `"limit"`
  *   for an oversized reply
+ * @throws {net.NetError} kind `"net"` when the service cannot be reached
  * @example
  *   def r as vies.Result init vies.check(vies.client(), "AT", "U12345678");
  */
@@ -838,7 +841,9 @@ export func checkApprox(
  *   `status`; `transient` for `UNAVAILABLE_STATUS`) or a malformed answer;
  *   `"limit"` for a reply over `MAX_REPLY_BYTES`, `"timeout"` when the
  *   server does not answer in time, `"closed"` when it closes the
- *   connection
+ *   connection mid-reply
+ * @throws {net.NetError} kind `"net"` when the service cannot be reached
+ *   (refused, reset, DNS, TLS, a close before any answer)
  * @example
  *   for (def cs in vies.status(vies.client()).countries) {
  *       if (not $cs.available) {
@@ -857,8 +862,9 @@ export func status(c as Client) {
         $r = http.send("GET", $c.statusEndpoint, {"Accept": "application/json"}, "", $o);
     } catch (e) {
         # generic kinds stay generic: a reached cap, a deadline, a closed
-        # connection; a cancelled task goes on as it is
-        if ($e.kind == "cancelled") {
+        # connection; a cancelled task and a transport failure (a
+        # net.NetError, fields intact) go on as they are
+        if ($e.kind == "cancelled" or $e.kind == "net") {
             throw $e;
         }
         if ($e.kind == "limit" or $e.kind == "timeout" or $e.kind == "closed") {

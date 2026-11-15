@@ -479,6 +479,62 @@ func testATimeoutIsKindTimeout() {
     net.close($l);
 }
 
+# A server that cannot be reached is the transport's net.NetError, passed
+# on with its fields, from the SOAP checks and from status alike.
+func testAnUnreachableServerIsANetError() {
+    def l as net.Listener init net.listen("127.0.0.1:0");
+    def addr as string init net.address($l);
+    net.close($l);
+    def c as Client init withRetries(withEndpoint(client(), "http://" + $addr + "/vies"), 2, 0);
+    $c = withStatusEndpoint($c, "http://" + $addr + "/check-status");
+    try {
+        check($c, "IE", "6388047V");
+        missed();
+    } catch (e) {
+        testing.assertEqual($e.kind, "net");
+        testing.assertEqual($e.reason, "refused");
+        testing.assertFalse($e.sent);
+        testing.assertFalse($e.replied);
+    }
+    try {
+        status($c);
+        missed();
+    } catch (e) {
+        testing.assertEqual($e.kind, "net");
+        testing.assertEqual($e.reason, "refused");
+        testing.assertEqual($e.op, "connect");
+        testing.assertFalse($e.sent);
+    }
+}
+
+# A connection reset after the request went out may have reached VIES: it
+# is passed on, not retried.
+func testAResetIsNotRetried() {
+    def l as net.Listener init net.listen("127.0.0.1:0");
+    def t as task of int init spawn {
+        def conn as net.Conn init net.accept($l);
+        net.readBytes($conn, 65536);
+        time.sleep(time.fromMilliseconds(100));
+        net.abort($conn);
+        return 1;
+    };
+    def c as Client init withRetries(
+        withEndpoint(client(), "http://" + net.address($l) + "/vies"),
+        2,
+        0);
+    try {
+        check($c, "IE", "6388047V");
+        missed();
+    } catch (e) {
+        testing.assertEqual($e.kind, "net");
+        testing.assertEqual($e.reason, "reset");
+        testing.assertTrue($e.sent);
+    }
+    # one connection only: the server took exactly one request
+    testing.assertEqual(task.wait($t), 1);
+    net.close($l);
+}
+
 # Each wait doubles the one before, up to MAX_WAIT_MS: 10 retries wait at
 # most 5 minutes in all, not hours.
 func testRetryWaitsAreCapped() {

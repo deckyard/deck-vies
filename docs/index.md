@@ -76,15 +76,18 @@ A refused or failed check throws `ViesError` (kind `"vies"`):
 
 | Field | Meaning |
 |---|---|
-| `code` | VIES's fault code, `""` for an error found locally or a transport failure |
+| `code` | VIES's fault code, `""` for an error found locally or a failed HTTP exchange |
 | `transient` | "try again later": one of `TRANSIENT_CODES`, or the service's 503 maintenance page |
 | `status` | the HTTP status of the reply refused, 0 for a local error |
 
 A server that does not answer in time is kind `"timeout"`, one that closes
 the connection under the call kind `"closed"` (on an interpreter whose
 bundled `soap` module passes them on, from jennifer 0.26.0; before, they
-were a `ViesError` with code `""`). Any other transport failure is a
-`ViesError` with code `""`. None of these is retried.
+were a `ViesError` with code `""`). A server that cannot be reached
+(connection refused or reset, DNS, TLS, a close before any answer) is the
+transport's `net.NetError` (kind `"net"`), passed on with its fields:
+`reason` says which, `sent` false means VIES never got the request. None of
+these is retried.
 
 The fault codes:
 
@@ -140,7 +143,8 @@ not move it; `withStatusEndpoint(c, url)` does, under the same rule
 (`https://`, or `http://` on this machine). An HTTP failure is a
 `ViesError` with code `""` and its status (`transient` for 503), as is an
 answer that is not the expected JSON; a reply over 64 KiB is kind
-`"limit"`, a server that does not answer in time `"timeout"`.
+`"limit"`, a server that does not answer in time `"timeout"`, one that
+cannot be reached a `net.NetError` (kind `"net"`).
 
 ## The test service
 
