@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.26.0
+# pragma-jennifer-version: >=0.27.0
 # pragma-jennifer-capability: net
 
 /**
@@ -330,7 +330,7 @@ func refuse(message as string, status as int) {
 func shown(text as string) {
     def cut as string init $text;
     if (len($cut) > 80) {
-        $cut = strings.substring($cut, 0, 80) + "...";
+        $cut = $cut[..80] + "...";
     }
     return "\"" + regex.replace("[^ -~]", $cut, "?") + "\"";
 }
@@ -490,7 +490,7 @@ export func normalize(country as string, number as string) {
     def fits as bool init regex.matches("^(?:" + SYNTAX[$cc] + ")$", $n);
     if (not $fits and
         (strings.startsWith($n, $cc) or ($cc == "EL" and strings.startsWith($n, "GR")))) {
-        $n = strings.substring($n, 2);
+        $n = $n[2..];
     }
     # Belgian numbers had 9 digits before the leading 0 was added
     if ($cc == "BE" and regex.matches('^[0-9]{9}$', $n)) {
@@ -515,7 +515,7 @@ export func parse(vat as string) {
     if (len($t) < 3 or not regex.matches('^[A-Za-z]{2}', $t)) {
         fail("a VAT number starts with its country code, got " + shown($vat));
     }
-    return normalize(strings.substring($t, 0, 2), strings.substring($t, 2));
+    return normalize($t[..2], $t[2..]);
 }
 
 /**

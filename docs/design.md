@@ -106,7 +106,9 @@ Not in scope:
 
 ## Dependencies on the interpreter
 
-- Floor `jennifer >=0.26.0`; the default binary (capability `net`).
+- Floor `jennifer >=0.27.0`; the default binary (capability `net`). The
+  tests use the UTF-8 codec of `encoding.decode` and `strings.replicate`,
+  new in 0.27.0.
 - The bundled `soap` module passing `"limit"` on, `"timeout"`, `"closed"`
   and `"cancelled"` since M28.60, and `"net"` (`net.NetError`, M28.65); the
   bundled `http` for `status`.

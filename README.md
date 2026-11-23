@@ -38,7 +38,7 @@ Commission's test service (`vies.sandboxClient()`) without them.
 
 ## Requirements
 
-Jennifer 0.26.0 or newer, with the `net` capability: the checks are SOAP
+Jennifer 0.27.0 or newer, with the `net` capability: the checks are SOAP
 requests to the Commission's VIES service, over the bundled `soap` module,
 and `status` a `GET` over the bundled `http` module.
 

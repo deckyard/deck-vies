@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.26.0
+# pragma-jennifer-version: >=0.27.0
 
 /**
  * White-box tests: jennifer test src/vies_test.j
@@ -9,6 +9,7 @@
  * recorded from the live service and the Commission's test service on
  * 2026-11-14, and hands back what it received.
  */
+use encoding;
 use httpd;
 use net;
 use task;
@@ -124,7 +125,7 @@ func serve(srv as httpd.Server, replies as list of Reply) {
             path: httpd.path($req),
             contentType: httpd.header($req, "Content-Type"),
             action: httpd.header($req, "SOAPAction"),
-            body: convert.stringFromBytes("utf-8", httpd.body($req))
+            body: encoding.decode("utf-8", httpd.body($req))
         };
         httpd.setHeader($req, "Content-Type", $r.contentType);
         httpd.respond($req, $r.status, $r.body);
@@ -443,7 +444,7 @@ func testOddReplies() {
 
 func testAnOversizedReplyIsALimit() {
     def f as Fake init fake([
-        ok(strings.replace(VALID, "GOOGLE IRELAND LIMITED", strings.repeat("x", 70000)))
+        ok(strings.replace(VALID, "GOOGLE IRELAND LIMITED", strings.replicate("x", 70000)))
     ]);
     try {
         check(fakeClient($f), "IE", "6388047V");
@@ -461,7 +462,8 @@ func testATimeoutIsKindTimeout() {
     def t as task of int init spawn {
         def conn as net.Conn init net.accept($l);
         net.readBytes($conn, 65536);
-        time.sleep(time.fromMilliseconds(1600));
+        # past the 1000 ms floor timeout
+        time.sleep(time.fromMilliseconds(1300));
         net.close($conn);
         return 0;
     };
@@ -876,7 +878,7 @@ func testStatusRefusesAMalformedAnswer() {
 
 func testAnOversizedStatusIsALimit() {
     def f as Fake init fake([
-        jsonReply(200, strings.replace(STATUS, "Unavailable", strings.repeat("x", 70000)))
+        jsonReply(200, strings.replace(STATUS, "Unavailable", strings.replicate("x", 70000)))
     ]);
     try {
         status(withStatusEndpoint(client(), $f.url));
@@ -892,7 +894,8 @@ func testAStatusTimeoutIsKindTimeout() {
     def t as task of int init spawn {
         def conn as net.Conn init net.accept($l);
         net.readBytes($conn, 65536);
-        time.sleep(time.fromMilliseconds(1600));
+        # past the 1000 ms floor timeout
+        time.sleep(time.fromMilliseconds(1300));
         net.close($conn);
         return 0;
     };
