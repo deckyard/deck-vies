@@ -4,7 +4,7 @@
 [![Documentation](https://img.shields.io/badge/docs-github%20pages-blue)](https://deckyard.github.io/deck-vies/)
 [![release](https://img.shields.io/github/v/release/deckyard/deck-vies)](https://github.com/deckyard/deck-vies/releases/latest)
 
-EU VAT number validation through VIES, the European Commission's VAT
+EU VAT number validation through VIES™, the European Commission's VAT
 Information Exchange System, for [Jennifer](https://jennifer-lang.dev/)
 programs: check a customer's VAT number before invoicing without VAT
 (reverse charge), with the trader's name and address, and get a
@@ -57,3 +57,10 @@ LGPL-3.0-only, see [LICENSE](LICENSE). Copyright (C) 2026 mplx &lt;mplx@jennifer
 
 `tools/check-headers.sh` checks every source file's SPDX header against
 `deck.toml`.
+
+## Trademarks
+
+VIES™ and other product and company names may be trademarks of their
+respective owners. They are used only to identify the products this deck
+works with. This deck is an independent project, not affiliated with,
+sponsored or endorsed by the European Commission.

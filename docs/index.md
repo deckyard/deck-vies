@@ -3,7 +3,7 @@
 
 # @deckyard/vies
 
-EU VAT number validation through VIES, the European Commission's VAT
+EU VAT number validation through VIES™, the European Commission's VAT
 Information Exchange System: the check a seller makes before invoicing a
 business customer in another member state without VAT (reverse charge).
 VIES asks the member state's own register, so its answer is the authority.
@@ -153,3 +153,10 @@ number: `100` is valid, `200` invalid, and `201` to `601` each return
 one fault (`300` `SERVICE_UNAVAILABLE`, `600` `MS_MAX_CONCURRENT_REQ`,
 ...). Syntax checks and retries are off on it. It was `testClient()`
 before 0.2.0; the test runner took that exported name for a test.
+
+## Trademarks
+
+VIES™ and other product and company names may be trademarks of their
+respective owners. They are used only to identify the products this deck
+works with. This deck is an independent project, not affiliated with,
+sponsored or endorsed by the European Commission.

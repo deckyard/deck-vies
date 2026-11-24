@@ -10,7 +10,7 @@ Every export of `@deckyard/vies`. Guides are listed in
 import "@deckyard/vies/" as vies;
 ```
 
-A refused or failed check throws `ViesError` (kind `"vies"`) with VIES's
+A refused or failed check throws `ViesError` (kind `"vies"`) with VIES™'s
 fault `code` and `transient`; an answer to another request (wrong element,
 another number echoed, `checkApprox` without a consultation number) has
 code `""`. A reply over its cap is kind `"limit"`.

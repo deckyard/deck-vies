@@ -6,7 +6,7 @@
 ## Scope
 
 `@deckyard/vies` validates EU VAT numbers through the European Commission's
-VIES service: the check a seller makes before invoicing a business customer
+VIES™ service: the check a seller makes before invoicing a business customer
 in another member state without VAT (reverse charge). `check` asks
 `checkVat`, `checkApprox` asks `checkVatApprox` and returns the consultation
 number to keep as proof, and `status` reads VIES's availability per member
